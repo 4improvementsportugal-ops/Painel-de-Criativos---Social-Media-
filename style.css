@@ -1,4 +1,4 @@
-  :root{ --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif; }
+css/style.css  :root{ --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif; }
   .viz-root{
     color-scheme: light;
     --page:            #f6f6f8;
