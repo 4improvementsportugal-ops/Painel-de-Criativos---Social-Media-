@@ -7,6 +7,7 @@ function parseDate(s){ const [y,m,d]=s.split("-").map(Number); return new Date(y
 function daysBetween(a,b){ return Math.round((a-b)/(1000*60*60*24)); }
 function fmtShort(s){ const d=parseDate(s); return `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}`; }
 function toISO(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+function cssEscape(s){ return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/["\\]/g, "\\$&"); }
 
 // "hoje" real, calculado no navegador de quem estiver vendo o painel
 const now = new Date();
@@ -178,6 +179,69 @@ function render(){
     : `Essa semana: tudo pronto`;
   todayBanner.innerHTML = `${hojeHtml}<span class="sep">·</span>${semanaHtml}`;
 
+  // ---- fila de prioridade de producao ----
+  // considera apenas itens "A produzir"; Produzido/Agendado/Publicado contam como prontos.
+  // reaproveita a mesma ordem de urgencia de `visibleClients` (atrasado > critico > atencao > em_dia,
+  // com desempate pela proxima data pendente), filtrando so quem ainda tem pendencia.
+  const queueClients = visibleClients
+    .map(c=>{
+      const pending = c.rows.filter(r=> r.status === "A produzir").sort((a,b)=> a.data.localeCompare(b.data));
+      return { nome: c.nome, pending };
+    })
+    .filter(c=> c.pending.length > 0);
+
+  const queueSummary = document.getElementById("queueSummary");
+  const totalPendingCount = queueClients.reduce((s,c)=> s + c.pending.length, 0);
+  queueSummary.innerHTML = queueClients.length
+    ? `<b>${totalPendingCount}</b> criativo${totalPendingCount>1?"s":""} pendente${totalPendingCount>1?"s":""} em <b>${queueClients.length}</b> cliente${queueClients.length>1?"s":""}`
+    : `Tudo em dia`;
+
+  const queueGrid = document.getElementById("queueGrid");
+  queueGrid.innerHTML = "";
+  if(queueClients.length === 0){
+    queueGrid.innerHTML = `<div class="queue-empty">Não há criativos pendentes para este ciclo.</div>`;
+  } else {
+    queueClients.forEach((c, idx)=>{
+      const next = c.pending[0];
+      const diff = daysBetween(parseDate(next.data), today);
+      let statusLabel, statusCls;
+      if(diff < 0){ statusLabel = "Data vencida"; statusCls = "critical"; }
+      else if(diff === 0){ statusLabel = "Publica hoje"; statusCls = "critical"; }
+      else if(diff <= 3){ statusLabel = `Faltam ${diff} dia${diff>1?"s":""}`; statusCls = "warning"; }
+      else { statusLabel = `Faltam ${diff} dia${diff>1?"s":""}`; statusCls = "neutral"; }
+      const card = document.createElement("div");
+      card.className = "queue-card";
+      card.setAttribute("role", "button");
+      card.setAttribute("tabindex", "0");
+      card.innerHTML = `
+        <div class="queue-rank">${idx+1}</div>
+        <div class="queue-body">
+          <div class="queue-top">
+            <span class="dot" style="background:var(${clientColor[c.nome]})"></span>
+            <span class="queue-name">${c.nome}</span>
+          </div>
+          <div class="queue-meta">
+            <span>Próxima pendência: ${fmtShort(next.data)}</span>
+            <span class="queue-status ${statusCls}">${statusLabel}</span>
+          </div>
+          <div class="queue-count">${c.pending.length} item${c.pending.length>1?"s":""} a produzir</div>
+        </div>
+        <div class="queue-arrow">→</div>
+      `;
+      const goToClient = ()=>{
+        activeFilter = new Set([c.nome]);
+        render();
+        requestAnimationFrame(()=>{
+          const target = document.querySelector(`.client-card[data-client-name="${cssEscape(c.nome)}"]`);
+          if(target) target.scrollIntoView({ behavior:"smooth", block:"start" });
+        });
+      };
+      card.addEventListener("click", goToClient);
+      card.addEventListener("keydown", (e)=>{ if(e.key==="Enter" || e.key===" "){ e.preventDefault(); goToClient(); } });
+      queueGrid.appendChild(card);
+    });
+  }
+
   // ---- calendario (mes atual, calculado a partir de "hoje") ----
   const calGrid = document.getElementById("calGrid");
   const year = today.getFullYear(), month = today.getMonth();
@@ -238,6 +302,7 @@ function render(){
     const dim = !activeFilter.has(c.nome);
     const card = document.createElement("div");
     card.className = "client-card" + (dim ? " dim" : "");
+    card.setAttribute("data-client-name", c.nome);
     const stageCounts = {"A produzir":0,"Produzido":0,"Agendado":0,"Publicado":0};
     c.rows.forEach(r=> stageCounts[r.status]++);
     const bar = STATUS_CYCLE.map(s=>{
